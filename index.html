@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ArmSync | Robotic Arm Control</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- TensorFlow.js is free/open-source. Internet is needed to load this library. -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">ARMSYNC • ROBOTICS LAB</p>
+      <h1>Robotic Arm Control</h1>
+      <p class="subhead">Manual control · Sensor pick & place · Vision sorting</p>
+    </div>
+    <div class="status-stack">
+      <span id="connectionBadge" class="badge badge-warn">SIMULATION MODE</span>
+      <span id="modeBadge" class="badge">Mode: Manual</span>
+      <button id="connectNodeMCU" class="button secondary" type="button">Connect NodeMCU</button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="card camera-connection-card" aria-label="Camera source">
+      <div class="card-title-row"><h3>Camera source</h3><span id="cameraSourceBadge" class="badge">Laptop camera selected</span></div>
+      <p class="hint">To use an ESP32-CAM, enter its MJPEG stream address (usually <code>http://CAMERA-IP:81/stream</code>) and click Connect ESP32-CAM. Your computer and camera must be on the same Wi-Fi network.</p>
+      <label for="esp32StreamUrl">ESP32-CAM stream URL</label>
+      <input id="esp32StreamUrl" type="url" placeholder="http://192.168.1.123:81/stream" autocomplete="url">
+      <div class="button-row">
+        <button id="connectEsp32Cam" class="button" type="button">Connect ESP32-CAM</button>
+        <button id="useLaptopCamera" class="button secondary" type="button">Use laptop camera instead</button>
+        <button id="stopAllCameras" class="button secondary" type="button">Stop camera</button>
+      </div>
+      <p id="cameraSourceStatus" class="state-line">Laptop camera is selected. Connect the ESP32-CAM to switch all previews.</p>
+    </section>
+    <div class="safety-strip">
+      <span><strong>Safety:</strong> Test with the arm unloaded and keep hands clear.</span>
+      <button id="globalStop" class="button danger">STOP ALL MOTION</button>
+    </div>
+
+    <nav class="tabs" aria-label="Operating modes">
+      <button class="tab active" data-tab="manual" aria-selected="true">1A · Manual</button>
+      <button class="tab" data-tab="sense" aria-selected="false">1B · Sense & Place</button>
+      <button class="tab" data-tab="vision" aria-selected="false">1C · Vision Sort</button>
+    </nav>
+
+    <section id="manual" class="tab-panel active">
+      <div class="section-heading">
+        <div><p class="eyebrow">TIER 1A</p><h2>Manual joint control</h2><p>Four controls. The base dial moves around the ring only; 0° is at the top.</p></div>
+        <div class="manual-actions"><div class="angle-summary" id="angleSummary">Base 0° · Shoulder 90° · Elbow 90° · Gripper 90°</div><button id="resetManual" class="button secondary" type="button">Reset controls</button></div>
+      </div>
+      <div class="manual-grid">
+        <article class="card">
+          <h3>Motor 1 · Base rotation</h3>
+          <p class="muted">360° continuous dial · clockwise increases angle</p>
+          <div class="radial-wrap">
+            <div id="baseDial" class="base-dial" role="slider" tabindex="0" aria-label="Base rotation angle" aria-valuemin="0" aria-valuemax="359" aria-valuenow="0">
+              <span class="dial-label north">0°</span><span class="dial-label east">90°</span>
+              <span class="dial-label south">180°</span><span class="dial-label west">270°</span>
+              <div id="baseKnob" class="base-knob"></div>
+              <div class="dial-center"><strong id="baseAngle">0°</strong><small>BASE</small></div>
+            </div>
+          </div>
+          <p class="hint">Drag the knob around the outer circumference. It cannot move through the middle.</p>
+        </article>
+
+        <article class="card">
+          <h3>Motor 2 · Shoulder</h3>
+          <p class="muted">Limited joint · 0–180°</p>
+          <div class="stick-pad" data-joint="shoulder" role="slider" tabindex="0" aria-label="Shoulder angle" aria-valuemin="0" aria-valuemax="180" aria-valuenow="90">
+            <span class="pad-axis"></span><span class="pad-end top">180°</span><span class="pad-end bottom">0°</span>
+            <span class="stick-knob"></span>
+          </div>
+          <div class="joint-readout"><span>Angle</span><strong id="shoulderAngle">90°</strong></div>
+        </article>
+
+        <article class="card">
+          <h3>Motor 3 · Elbow</h3>
+          <p class="muted">Limited joint · 0–180°</p>
+          <div class="stick-pad" data-joint="elbow" role="slider" tabindex="0" aria-label="Elbow angle" aria-valuemin="0" aria-valuemax="180" aria-valuenow="90">
+            <span class="pad-axis"></span><span class="pad-end top">180°</span><span class="pad-end bottom">0°</span>
+            <span class="stick-knob"></span>
+          </div>
+          <div class="joint-readout"><span>Angle</span><strong id="elbowAngle">90°</strong></div>
+        </article>
+
+        <article class="card">
+          <h3>Motor 4 · Wrist / gripper servo</h3>
+          <p class="muted">Servo angle · 0–180° (calibrate to your mechanism)</p>
+          <div class="stick-pad" data-joint="gripper" role="slider" tabindex="0" aria-label="Wrist or gripper servo angle" aria-valuemin="0" aria-valuemax="180" aria-valuenow="90">
+            <span class="pad-axis"></span><span class="pad-end top">180°</span><span class="pad-end bottom">0°</span>
+            <span class="stick-knob"></span>
+          </div>
+          <div class="joint-readout"><span>Angle</span><strong id="gripperAngle">90°</strong></div>
+          <div class="button-row">
+          </div>
+        </article>
+      </div>
+
+      <div class="two-col lower-grid">
+        <article class="card">
+          <div class="card-title-row"><h3>Camera feed</h3><span class="muted">Browser camera preview</span></div>
+          <video id="manualVideo" class="video" autoplay playsinline muted></video><img id="manualEsp32Image" class="video esp32-feed" alt="ESP32-CAM live stream" hidden>
+          <div class="button-row">
+            <button class="button" id="startManualCamera">Use laptop camera</button>
+            <button class="button secondary" id="stopCamera">Stop camera</button>
+          </div>
+          <p class="hint">Use the Camera source panel above to select ESP32-CAM or the laptop camera.</p>
+        </article>
+        <article class="card">
+          <h3>System log</h3>
+          <ul id="eventLog" class="event-log" aria-live="polite"><li>Website ready. Hardware is not connected.</li></ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="sense" class="tab-panel">
+      <div class="section-heading"><div><p class="eyebrow">TIER 1B</p><h2>Sensor pick & place</h2><p>For a real build, the distance sensor and arm controller must send readings to a backend.</p></div></div>
+      <div class="two-col">
+        <article class="card">
+          <h3>Distance sensor</h3>
+          <div class="metric"><strong id="distanceValue">—</strong><span>cm</span></div>
+          <label for="thresholdInput">Pickup threshold (cm)</label>
+          <input id="thresholdInput" type="number" min="1" max="100" value="8">
+          <div class="button-row">
+            <button class="button" id="simulateDetection">Simulate object detected</button>
+            <button class="button secondary" id="resetSense">Reset task</button>
+          </div>
+          <p id="senseState" class="state-line">Waiting for a sensor reading.</p>
+        </article>
+        <article class="card">
+          <div class="card-title-row"><h3>Camera feed</h3><span class="muted">Browser camera preview</span></div>
+          <video id="senseVideo" class="video" autoplay playsinline muted></video><img id="senseEsp32Image" class="video esp32-feed" alt="ESP32-CAM live stream" hidden>
+          <div class="button-row">
+            <button class="button" id="startSenseCamera">Use laptop camera</button>
+            <button class="button secondary" id="stopSenseCamera">Stop camera</button>
+          </div>
+          <p class="hint">The selected camera source is shared across tabs. This preview does not read a distance sensor.</p>
+        </article>
+        <article class="card">
+          <h3>Task status</h3>
+          <div class="stat-grid">
+            <div class="stat"><span>Pick count</span><strong id="pickCount">0</strong></div>
+            <div class="stat"><span>Current task</span><strong id="taskState">Idle</strong></div>
+          </div>
+          <p class="hint">The simulation button tests the website flow only. It does not move a physical arm.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="vision" class="tab-panel">
+      <div class="section-heading">
+        <div><p class="eyebrow">TIER 1C</p><h2>AI vision sorting</h2><p>Train a free image model, load its exported files, then classify the object in the camera view.</p></div>
+        <span id="modelBadge" class="badge badge-warn">Model not loaded</span>
+      </div>
+      <div class="two-col vision-grid">
+        <article class="card">
+          <h3>1 · Load your trained model</h3>
+          <p class="muted">Select the three files exported by Teachable Machine: model.json, metadata.json, and weights.bin.</p>
+          <label for="modelJson">Model JSON</label><input id="modelJson" type="file" accept=".json,application/json">
+          <label for="metadataJson">Metadata JSON</label><input id="metadataJson" type="file" accept=".json,application/json">
+          <label for="weightsBin">Weights BIN</label><input id="weightsBin" type="file" accept=".bin,application/octet-stream">
+          <button id="loadModel" class="button">Load model locally</button>
+          <p id="modelStatus" class="state-line">No model loaded. The rest of the dashboard can be explored in demo mode.</p>
+          <hr>
+          <h3>2 · Camera and prediction</h3>
+          <video id="visionVideo" class="video" autoplay playsinline muted></video><img id="visionEsp32Image" class="video esp32-feed" alt="ESP32-CAM live stream" hidden>
+          <div class="button-row">
+            <button id="startVisionCamera" class="button">Start camera</button>
+            <button id="classifyOnce" class="button secondary" disabled>Classify object</button>
+          </div>
+          <p class="hint">Use a clear, well-lit view with one object at a time. The ESP32-CAM must be reachable over Wi-Fi; browser AI may also require CORS-enabled camera firmware.</p>
+        </article>
+        <article class="card">
+          <h3>Prediction result</h3>
+          <div id="prediction" class="prediction">Waiting for a prediction</div>
+          <div class="confidence-track"><div id="confidenceBar" class="confidence-fill"></div></div>
+          <p id="confidenceText" class="muted">Confidence: —</p>
+          <h3>Sorting route</h3>
+          <div class="route-list">
+            <div><span class="shape-icon">■</span><div><strong>Cube</strong><small>Right side · +90° from centre</small></div><span class="route-angle">+90°</span></div>
+            <div><span class="shape-icon">▲</span><div><strong>Pyramid</strong><small>Left side · −90° from centre</small></div><span class="route-angle">−90°</span></div>
+            <div><span class="shape-icon">●</span><div><strong>Sphere</strong><small>Centre · 0°</small></div><span class="route-angle">0°</span></div>
+          </div>
+          <label class="checkline"><input id="autoSort" type="checkbox"> Allow automatic sorting after a confident prediction</label>
+          <label for="confidenceThreshold">Minimum confidence: <strong id="thresholdLabel">80%</strong></label>
+          <input id="confidenceThreshold" type="range" min="50" max="99" value="80">
+          <button id="sortButton" class="button" disabled>Run sorting sequence</button>
+          <p id="sortStatus" class="state-line">Sorting disabled until a model is loaded and an object is classified.</p>
+          <h3>Sort log</h3>
+          <ul id="sortLog" class="event-log"><li>No sorting attempts yet.</li></ul>
+        </article>
+      </div>
+      <div class="notice"><strong>Important:</strong> The webpage can classify images, but physical sorting requires a tested robot backend, calibrated joint positions, a working gripper, and a safety check. The default code logs a proposed route; it does not send movement commands to hardware.</div>
+    </section>
+
+    <footer>
+      <span>ArmSync dashboard • Plain HTML, CSS and JavaScript</span>
+      <span id="footerMode">Demo mode · no hardware API configured</span>
+    </footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
